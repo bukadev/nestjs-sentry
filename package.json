@@ -12,7 +12,7 @@
     "format": "prettier --write \"lib/**/*.ts\"",
     "lint": "eslint 'lib/**/*.ts' --fix",
     "publish:npm": "npm publish --access public",
-    "test": "jest --detectOpenHandles --forceExit",
+    "test": "jest --detectOpenHandles",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand"

@@ -1,6 +1,6 @@
 import { ConsoleLogger, Inject, Injectable, Logger, LoggerService } from '@nestjs/common';
 import { OnApplicationShutdown } from '@nestjs/common';
-import { ClientOptions, Client } from '@sentry/types';
+import { Client } from '@sentry/types';
 import * as Sentry from '@sentry/node';
 import { SENTRY_MODULE_OPTIONS } from './sentry.tokens';
 import { SentryModuleOptions } from './interfaces';
@@ -29,7 +29,7 @@ export class SentryService implements OnApplicationShutdown, LoggerService {
             if (err.name === 'SentryError') {
               console.log(err);
             } else {
-              Sentry.getCurrentHub().getClient<Client<ClientOptions>>().captureException(err);
+              Sentry.getCurrentHub().getClient<Client>().captureException(err);
               process.exit(1);
             }
           },
@@ -74,8 +74,8 @@ export class SentryService implements OnApplicationShutdown, LoggerService {
       message = `${this.options.prefix}: ${message}`;
     }
     try {
-      if (this.options && this.options.logger) {
-        this.options.logger.error(message, context);
+      if (this.options && this.options.logger && this.options.logger.error) {
+        this.options.logger.error(message, trace, context);
       }
       Sentry.captureMessage(message, 'error');
     } catch (err) {
@@ -88,7 +88,7 @@ export class SentryService implements OnApplicationShutdown, LoggerService {
       message = `${this.options.prefix}: ${message}`;
     }
     try {
-      if (this.options && this.options.logger) {
+      if (this.options && this.options.logger && this.options.logger.warn) {
         this.options.logger.warn(message, context);
       }
       asBreadcrumb
