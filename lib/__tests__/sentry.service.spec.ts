@@ -1,263 +1,381 @@
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { SentryModuleOptions, SentryOptionsFactory } from '../interfaces';
-import { SentryModule } from '../sentry.module';
-import { SentryService } from '../sentry.service';
-import { SENTRY_TOKEN } from '../sentry.tokens';
-
 import * as Sentry from '@sentry/node';
-import { createSentryModuleOptions } from './helpers/create-sentry-module-options';
 
-jest.spyOn(Sentry, 'close').mockImplementation(() => Promise.resolve(true));
+import { SentryService } from '../sentry.service';
+import { SentryModuleOptions } from '../interfaces';
+import { SentryModule } from '../sentry.module';
 
 describe('SentryService', () => {
-  const config: SentryModuleOptions = createSentryModuleOptions();
-  const configWithNoLogger: SentryModuleOptions = createSentryModuleOptions({ logger: null });
+  let MODULE: TestingModule;
+  let SERVICE: SentryService;
+  let LOGGER: Logger;
 
-  const failureConfig = createSentryModuleOptions({
-    dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+  beforeAll(async () => {
+    LOGGER = new Logger();
+    const options: SentryModuleOptions = {
+      dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+      logger: LOGGER,
+    };
+
+    MODULE = await Test.createTestingModule({
+      imports: [SentryModule.forRoot(options)],
+    }).compile();
+
+    SERVICE = MODULE.get<SentryService>(SentryService);
   });
-  const failureConfigNoLogger: SentryModuleOptions = createSentryModuleOptions({
-    dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
-    logger: null,
+
+  afterEach(async () => {
+    jest.clearAllMocks();
+    await SERVICE.instance().flush();
+    await MODULE.close();
   });
 
-  class TestServiceNoLogging implements SentryOptionsFactory {
-    createSentryModuleOptions(): SentryModuleOptions {
-      return configWithNoLogger;
-    }
-  }
+  describe('Sentry.init', () => {
+    it('should call Sentry.init with the options', () => {
+      const spy = jest.spyOn(Sentry, 'init');
+      new SentryService({
+        dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+        logger: LOGGER,
+        integrations: [],
+      });
 
-  class FailureService implements SentryOptionsFactory {
-    createSentryModuleOptions(): SentryModuleOptions {
-      return failureConfig;
-    }
-  }
-
-  class FailureServiceNoLogging implements SentryOptionsFactory {
-    createSentryModuleOptions(): SentryModuleOptions {
-      return failureConfigNoLogger;
-    }
-  }
-
-  describe('sentry.log:error', () => {
-    it('should provide the sentry client and call log with disabled logging', async () => {
-      const mod = await Test.createTestingModule({
-        imports: [
-          SentryModule.forRootAsync({
-            useClass: FailureServiceNoLogging,
-          }),
-        ],
-      }).compile();
-
-      const sentryService = mod.get<SentryService>(SENTRY_TOKEN);
-      sentryService.log('sentry:log');
-      expect(sentryService.log).toBeInstanceOf(Function);
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+          integrations: expect.arrayContaining([
+            expect.any(Sentry.Integrations.OnUncaughtException),
+            expect.any(Sentry.Integrations.OnUnhandledRejection),
+          ]),
+        }),
+      );
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    it('should provide the sentry client and call log', async () => {
-      const mod = await Test.createTestingModule({
-        imports: [
-          SentryModule.forRootAsync({
-            useClass: FailureService,
-          }),
-        ],
-      }).compile();
+    it('should call logger.fatal when an uncaught exception occurs', async () => {
+      const processSpy = jest.spyOn(process, 'exit').mockImplementation();
+      const spy = jest.spyOn(LOGGER, 'fatal');
+      const error = new Error('Uncaught exception');
 
-      const sentryService = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentryService.log).toBeInstanceOf(Function);
+      process.nextTick(() => process.emit('uncaughtException', error));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(spy).toHaveBeenCalledWith(error);
+      expect(processSpy).toHaveBeenCalledWith(1);
     });
   });
 
-  describe('sentry.log', () => {
-    it('should provide the sentry client and call log', async () => {
-      const mod = await Test.createTestingModule({
+  describe('service:log', () => {
+    it('should prefix the message if prefix option is set', async () => {
+      const module: TestingModule = await Test.createTestingModule({
         imports: [
           SentryModule.forRoot({
-            ...config,
+            dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+            prefix: 'prefix',
           }),
         ],
       }).compile();
+      const SENTRY_SERVICE = module.get<SentryService>(SentryService);
+      const spy = jest.spyOn(Sentry, 'captureMessage');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      sentry.log('sentry:log');
-      expect(sentry.log).toBeInstanceOf(Function);
+      SENTRY_SERVICE.log('message');
+
+      expect(spy).toHaveBeenCalledWith('prefix: message', 'log');
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    it('should provide the sentry client and call log with disabled logging', async () => {
-      const mod = await Test.createTestingModule({
-        imports: [
-          SentryModule.forRootAsync({
-            useClass: TestServiceNoLogging,
-          }),
-        ],
-      }).compile();
+    it('should log the message if logger option is set', () => {
+      const spy = jest.spyOn(LOGGER, 'log');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      expect(sentry.log).toBeInstanceOf(Function);
+      SERVICE.log('message', 'context');
+
+      expect(spy).toHaveBeenCalledWith('message', 'context');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should add a breadcrumb if asBreadcrumb parameter is true', () => {
+      const spy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.log('message', 'context', true);
+
+      expect(spy).toHaveBeenCalledWith({
+        message: 'message',
+        level: 'log',
+        data: {
+          context: 'context',
+        },
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should capture a message if asBreadcrumb parameter is false', () => {
+      const spy = jest.spyOn(Sentry, 'captureMessage');
+      const breadCrumbSpy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.log('message', 'context', false);
+
+      expect(spy).toHaveBeenCalledWith('message', 'log');
+      expect(breadCrumbSpy).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log an error if an exception is thrown', () => {
+      const error = new Error('error');
+      jest.spyOn(Sentry, 'captureMessage').mockImplementation(() => {
+        throw error;
+      });
+      const spy = jest.spyOn(Logger, 'error');
+
+      SERVICE.log('message');
+
+      expect(spy).toHaveBeenCalledWith(error, SentryService.name);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('sentry.error', () => {
-    it('should provide the sentry client and call error', async () => {
-      const mod = await Test.createTestingModule({
+  describe('service:error', () => {
+    it('should prefix the message if prefix option is set', async () => {
+      const module: TestingModule = await Test.createTestingModule({
         imports: [
           SentryModule.forRoot({
-            ...config,
+            dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+            prefix: 'prefix',
           }),
         ],
       }).compile();
+      const SENTRY_SERVICE = module.get<SentryService>(SentryService);
+      const spy = jest.spyOn(Sentry, 'captureMessage');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      sentry.error('sentry:error');
-      expect(sentry.error).toBeInstanceOf(Function);
+      SENTRY_SERVICE.error('message');
+
+      expect(spy).toHaveBeenCalledWith('prefix: message', 'error');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log the message if logger option is set', () => {
+      const spy = jest.spyOn(LOGGER, 'error');
+
+      SERVICE.error('message', 'trace', 'context');
+
+      expect(spy).toHaveBeenCalledWith('message', 'trace', 'context');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should capture an exception if an exception is thrown', () => {
+      const error = new Error('error');
+      jest.spyOn(Sentry, 'captureException').mockImplementation(() => {
+        throw error;
+      });
+      const spy = jest.spyOn(Logger, 'error');
+
+      SERVICE.error('message');
+
+      expect(spy).toHaveBeenCalledWith(error, SentryService.name);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('sentry.verbose', () => {
-    it('should provide the sentry client and call verbose', async () => {
-      const mod = await Test.createTestingModule({
+  describe('service:warn', () => {
+    it('should prefix the message if prefix option is set', async () => {
+      const module: TestingModule = await Test.createTestingModule({
         imports: [
           SentryModule.forRoot({
-            ...config,
+            dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+            prefix: 'prefix',
           }),
         ],
       }).compile();
+      const SENTRY_SERVICE = module.get<SentryService>(SentryService);
+      const spy = jest.spyOn(Sentry, 'captureMessage');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      sentry.verbose('sentry:verbose', 'context:verbose');
-      expect(sentry.verbose).toBeInstanceOf(Function);
-      expect(true).toBeTruthy();
+      SENTRY_SERVICE.warn('message');
+
+      expect(spy).toHaveBeenCalledWith('prefix: message', 'warning');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log the message if logger option is set', () => {
+      const spy = jest.spyOn(LOGGER, 'warn');
+
+      SERVICE.warn('message', 'context');
+
+      expect(spy).toHaveBeenCalledWith('message', 'context');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should add a breadcrumb if asBreadcrumb parameter is true', () => {
+      const spy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.warn('message', 'context', true);
+
+      expect(spy).toHaveBeenCalledWith({
+        message: 'message',
+        level: 'warning',
+        data: {
+          context: 'context',
+        },
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should capture a message if asBreadcrumb parameter is false', () => {
+      const spy = jest.spyOn(Sentry, 'captureMessage');
+      const breadCrumbSpy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.warn('message', 'context', false);
+
+      expect(spy).toHaveBeenCalledWith('message', 'warning');
+      expect(breadCrumbSpy).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log an error if an exception is thrown', () => {
+      const error = new Error('error');
+      jest.spyOn(Sentry, 'captureMessage').mockImplementation(() => {
+        throw error;
+      });
+      const spy = jest.spyOn(Logger, 'error');
+
+      SERVICE.warn('message');
+
+      expect(spy).toHaveBeenCalledWith(error, SentryService.name);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('sentry.debug', () => {
-    it('should provide the sentry client and call debug', async () => {
-      const mod = await Test.createTestingModule({
+  describe('service:debug', () => {
+    it('should prefix the message if prefix option is set', async () => {
+      const module: TestingModule = await Test.createTestingModule({
         imports: [
           SentryModule.forRoot({
-            ...config,
+            dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+            prefix: 'prefix',
           }),
         ],
       }).compile();
+      const SENTRY_SERVICE = module.get<SentryService>(SentryService);
+      const spy = jest.spyOn(Sentry, 'captureMessage');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      sentry.debug('sentry:debug', 'context:debug');
-      expect(sentry.debug).toBeInstanceOf(Function);
+      SENTRY_SERVICE.debug('message');
+
+      expect(spy).toHaveBeenCalledWith('prefix: message', 'debug');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log the message if logger option is set', () => {
+      const spy = jest.spyOn(LOGGER, 'debug');
+
+      SERVICE.debug('message', 'context');
+
+      expect(spy).toHaveBeenCalledWith('message', 'context');
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should add a breadcrumb if asBreadcrumb parameter is true', () => {
+      const spy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.debug('message', 'context', true);
+
+      expect(spy).toHaveBeenCalledWith({
+        message: 'message',
+        level: 'debug',
+        data: {
+          context: 'context',
+        },
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should capture a message if asBreadcrumb parameter is false', () => {
+      const spy = jest.spyOn(Sentry, 'captureMessage');
+      const breadCrumbSpy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.debug('message', 'context', false);
+
+      expect(spy).toHaveBeenCalledWith('message', 'debug');
+      expect(breadCrumbSpy).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should log an error if an exception is thrown', () => {
+      const error = new Error('error');
+      jest.spyOn(Sentry, 'captureMessage').mockImplementation(() => {
+        throw error;
+      });
+      const spy = jest.spyOn(Logger, 'error');
+
+      SERVICE.debug('message');
+
+      expect(spy).toHaveBeenCalledWith(error, SentryService.name);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('sentry.warn', () => {
-    it('should provide the sentry client and call warn', async () => {
-      const mod = await Test.createTestingModule({
+  describe('service:verbose', () => {
+    it('should prefix the message if prefix option is set', async () => {
+      const module: TestingModule = await Test.createTestingModule({
         imports: [
           SentryModule.forRoot({
-            ...config,
+            dsn: 'https://sentry_io_dsn@sentry.io/1512xxx',
+            prefix: 'prefix',
           }),
         ],
       }).compile();
+      const SENTRY_SERVICE = module.get<SentryService>(SentryService);
+      const spy = jest.spyOn(Sentry, 'captureMessage');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      try {
-        sentry.warn('sentry:warn', 'context:warn');
-        expect(true).toBeTruthy();
-      } catch (err) {}
-      expect(sentry.warn).toBeInstanceOf(Function);
-    });
-  });
+      SENTRY_SERVICE.verbose('message');
 
-  describe('sentry.close', () => {
-    it('should not close the sentry if not specified in config', async () => {
-      const mod = await Test.createTestingModule({
-        imports: [SentryModule.forRoot(config)],
-      }).compile();
-      mod.enableShutdownHooks();
-
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      await mod.close();
+      expect(spy).toHaveBeenCalledWith('prefix: message', 'info');
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    it('should close the sentry if specified in config', async () => {
-      const timeout = 100;
-      const mod = await Test.createTestingModule({
-        imports: [
-          SentryModule.forRoot({
-            ...config,
-            close: {
-              enabled: true,
-              timeout,
-            },
-          }),
-        ],
-      }).compile();
-      mod.enableShutdownHooks();
+    it('should log the message if logger option is set', () => {
+      const spy = jest.spyOn(LOGGER, 'verbose');
 
-      const sentry = mod.get<SentryService>(SENTRY_TOKEN);
-      expect(sentry).toBeDefined();
-      expect(sentry).toBeInstanceOf(SentryService);
-      await mod.close();
-    });
-  });
+      SERVICE.verbose('message', 'context');
 
-  describe('Sentry Service asBreadcrumb implementation', () => {
-    let mod: TestingModule;
-    let sentry: SentryService;
-
-    beforeAll(async () => {
-      mod = await Test.createTestingModule({
-        imports: [
-          SentryModule.forRoot({
-            ...config,
-          }),
-        ],
-      }).compile();
-
-      sentry = mod.get<SentryService>(SENTRY_TOKEN);
+      expect(spy).toHaveBeenCalledWith('message', 'context');
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    afterAll(async () => {
-      await mod.close();
+    it('should add a breadcrumb if asBreadcrumb parameter is true', () => {
+      const spy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.verbose('message', 'context', true);
+
+      expect(spy).toHaveBeenCalledWith({
+        message: 'message',
+        level: 'info',
+        data: {
+          context: 'context',
+        },
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    it('sentry.SentryServiceInstance', () => {
-      expect(SentryService.SentryServiceInstance).toBeInstanceOf(Function);
+    it('should capture a message if asBreadcrumb parameter is false', () => {
+      const spy = jest.spyOn(Sentry, 'captureMessage');
+      const breadCrumbSpy = jest.spyOn(Sentry, 'addBreadcrumb');
+
+      SERVICE.verbose('message', 'context', false);
+
+      expect(spy).toHaveBeenCalledWith('message', 'info');
+      expect(breadCrumbSpy).not.toHaveBeenCalled();
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
-    it('sentry.instance', () => {
-      expect(sentry.instance).toBeInstanceOf(Function);
-    });
+    it('should log an error if an exception is thrown', () => {
+      const error = new Error('error');
+      jest.spyOn(Sentry, 'captureMessage').mockImplementation(() => {
+        throw error;
+      });
+      const spy = jest.spyOn(Logger, 'error');
 
-    it('sentry.log asBreabcrumb === true', () => {
-      sentry.log('sentry:log', 'context:log', true);
-      expect(sentry.log).toBeInstanceOf(Function);
-    });
+      SERVICE.verbose('message');
 
-    it('sentry.debug asBreabcrumb === true', () => {
-      sentry.debug('sentry:debug', 'context:debug', true);
-      expect(sentry.debug).toBeInstanceOf(Function);
-    });
-
-    it('sentry.verbose asBreabcrumb === true', () => {
-      sentry.verbose('sentry:verbose', 'context:verbose', true);
-      expect(sentry.verbose).toBeInstanceOf(Function);
-    });
-
-    it('sentry.warn asBreabcrumb === true', () => {
-      sentry.verbose('sentry:warn', 'context:warn', true);
-      expect(sentry.warn).toBeInstanceOf(Function);
+      expect(spy).toHaveBeenCalledWith(error, SentryService.name);
+      expect(spy).toHaveBeenCalledTimes(1);
     });
   });
 });
