@@ -24,6 +24,7 @@
 and it has been forked and released as a new package since we migrated to NestJS v10 in our projects.*
 * NestJS v10 supported.
 * Some opened issues have been resolved.
+* Test cases extended and optimized. 
 ------------------
 
 ## Installation
@@ -34,12 +35,9 @@ npm install --save @bukadev/nestjs-sentry @sentry/node
 
 ## Getting Started
 
-The simplest way to use `@ntegral/nestjs-sentry` is to use `SentryModule.forRoot`
+The simplest way to use `@bukadev/nestjs-sentry` is to use `SentryModule.forRoot`
 
 ```typescript
-import { Module } from '@nestjs-common';
-import { SentryModule } from '@ntegral/nestjs-sentry';
-
 @Module({
   imports: [
     SentryModule.forRoot({
@@ -57,11 +55,6 @@ export class AppModule {}
 The async way `@bukadev/nestjs-sentry` is to use `SentryModule.forRootAsync`
 
 ```typescript
-import { Module } from '@nestjs-common';
-import { SentryModule } from '@bukadev/nestjs-sentry';
-import { ConfigModule } from '@bukadev/nestjs-config';
-import { ConfigService } from '@bukadev/nestjs-config';
-
 @Module({
   imports: [
     SentryModule.forRootAsync({
@@ -85,9 +78,6 @@ You can then inject the Sentry client into any of your injectables by using a
 custom decorator
 
 ```typescript
-import { Injectable } from '@nestjs/common';
-import { InjectSentry, SentryService } from '@bukadev/nestjs-sentry';
-
 @Injectable()
 export class AppService {
   public constructor(@InjectSentry() private readonly client: SentryService) {
