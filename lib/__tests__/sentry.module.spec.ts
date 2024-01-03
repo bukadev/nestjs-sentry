@@ -1,14 +1,14 @@
+import { Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
 import { SentryModule } from '../sentry.module';
 import { SentryModuleOptions, SentryOptionsFactory } from '../interfaces';
 import { SentryService } from '../sentry.service';
 import { SENTRY_TOKEN } from '../sentry.tokens';
-import { Module } from '@nestjs/common';
 
 describe('SentryModule', () => {
-  const config: SentryModuleOptions = {
-    dsn: 'https://45740e3ae4864e77a01ad61a47ea3b7e@o115888.ingest.sentry.io/25956308132020',
+  const CONFIG: SentryModuleOptions = {
+    dsn: process.env.SENTRY_DNS,
     debug: true,
     environment: 'development',
     loggerOptions: {
@@ -18,7 +18,7 @@ describe('SentryModule', () => {
 
   class TestService implements SentryOptionsFactory {
     createSentryModuleOptions(): SentryModuleOptions {
-      return config;
+      return CONFIG;
     }
   }
 
@@ -31,7 +31,7 @@ describe('SentryModule', () => {
   describe('Static Initialization: forRoot', () => {
     it('should provide the sentry client', async () => {
       const mod = await Test.createTestingModule({
-        imports: [SentryModule.forRoot(config)],
+        imports: [SentryModule.forRoot(CONFIG)],
       }).compile();
 
       const sentry = mod.get<SentryService>(SENTRY_TOKEN);
@@ -47,7 +47,7 @@ describe('SentryModule', () => {
         const mod = await Test.createTestingModule({
           imports: [
             SentryModule.forRootAsync({
-              useFactory: () => config,
+              useFactory: () => CONFIG,
             }),
           ],
         }).compile();
